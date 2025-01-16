@@ -64,4 +64,3 @@ The configuration file should be in YAML format and contain the following parame
 - `reverse_barcodes`: Path to the file containing linked barcodes in the reverse direction.
 - `cores`: Number of CPU cores to use (optional, default: 1).
 - `error_rate`: Allowed error rate for the primer trimming step (optional, default: 0.1).
-```
