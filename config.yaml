@@ -14,7 +14,7 @@ ITS:
   reverse_primer: "TCCTCCGCTTATTGATATGC"
   forward_barcodes: "barcodes96.fasta"
   reverse_barcodes: "reverse_barcodes96.fasta"
-  min_len: 250
+  min_len: 200
   max_len: 2000
   cores: 4
 
