@@ -10,4 +10,4 @@ Script processes sequencing reads by performing the following steps:
 5.	Generating a summary file with statistics.
 6.	Cleaning up intermediate directories.
 
-![image](https://github.com/user-attachments/assets/f652ed68-a0f9-4085-be32-10aec5f92084)
+
