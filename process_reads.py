@@ -141,7 +141,7 @@ def trim_primers():
             os.makedirs(output_directory, exist_ok=True)
             cmd = (
                 f"cutadapt -g {forward_primer} -a {reverse_primer_rc} --trimmed-only "
-                f"-j {cores} --error-rate {erate} -o {output_file} {merged_file}"
+                f"-j {cores} --error-rate {erate} -m {min_len} -o {output_file} {merged_file}"
             )
             try:
                 run_command(cmd)
