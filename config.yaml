@@ -1,0 +1,21 @@
+# Example configuration file for pipeline processing
+
+16S:
+  forward_primer: "RGTTYGATYMTGGCTCAG"
+  reverse_primer: "RGYTACCTTGTTACGACTT"
+  forward_barcodes: "barcodes96.fasta"
+  reverse_barcodes: "reverse_barcodes96.fasta"
+  min_len: 1000
+  max_len: 1800
+  cores: 4
+
+ITS:
+  forward_primer: "TCCGTAGGTGAACCTGCGG"
+  reverse_primer: "TCCTCCGCTTATTGATATGC"
+  forward_barcodes: "barcodes96.fasta"
+  reverse_barcodes: "reverse_barcodes96.fasta"
+  min_len: 250
+  max_len: 2000
+  cores: 4
+
+# Add additional project types as needed
