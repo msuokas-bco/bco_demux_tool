@@ -45,6 +45,8 @@ args = parser.parse_args()
 # Determine script's directory
 script_dir = os.path.dirname(os.path.abspath(__file__))
 default_config_path = os.path.join(script_dir, "config.yaml")
+barcode_file = os.path.join(script_dir, "barcodes96.fasta")
+rev_barcode_file = os.path.join(script_dir, "reverse_barcodes96.fasta")
 
 # Check if --config argument is provided, else use the default config path
 config_path = args.config if args.config else default_config_path
@@ -94,7 +96,7 @@ os.makedirs(trimmed_dir, exist_ok=True)
 # Step 1: Demultiplex forward reads
 def demux_forward():
     cmd = (
-        f"cutadapt -e 0 -O 24 -g file:{pipeline_config.get('forward_barcodes')} --trimmed-only -m {min_len} -M {max_len} "
+        f"cutadapt -e 0 -O 24 -g file:{barcode_file} --discard-untrimmed -m {min_len} -M {max_len} "
         f"-j {cores} -o {fwd_demux_dir}/{{name}}.fastq.gz {reads_file}"
     )
     run_command(cmd)
@@ -102,7 +104,7 @@ def demux_forward():
 # Step 2: Demultiplex reverse reads
 def demux_reverse():
     cmd = (
-        f"cutadapt -e 0 -O 24 -g file:{pipeline_config.get('reverse_barcodes')} --trimmed-only -m {min_len} -M {max_len} "
+        f"cutadapt -e 0 -O 24 -g file:{rev_barcode_file} --discard-untrimmed -m {min_len} -M {max_len} "
         f"-j {cores} -o {rev_demux_dir}/{{name}}.fastq.gz {reads_file}"
     )
     run_command(cmd)
