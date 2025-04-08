@@ -3,10 +3,11 @@
 16S:
   forward_primer: "RGTTYGATYMTGGCTCAG"
   reverse_primer: "RGYTACCTTGTTACGACTT"
-  forward_barcodes: "barcodes96.fasta"
+  # For non-default barcode files, provide absolute filepaths
+  forward_barcodes: "barcodes96.fasta" 
   reverse_barcodes: "reverse_barcodes96.fasta"
-  min_len: 1000
-  max_len: 1800
+  min_len: 1200
+  max_len: 1700
   cores: 4
 
 ITS:
