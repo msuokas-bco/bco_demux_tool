@@ -7,6 +7,10 @@ import glob
 import gzip
 import logging
 import yaml
+import sys
+
+# Version information
+__version__ = "0.1.0"  # Early version that will be improved gradually
 
 # Function to reverse complement a primer sequence
 def reverse_complement(seq):
@@ -33,13 +37,31 @@ def run_command(cmd):
     except subprocess.CalledProcessError as e:
         logging.error(f"Command failed: {cmd}\nError: {e}")
 
-# Command-line arguments parser
+def show_version():
+    """Display version information and exit"""
+    print(f"BCO Demux Tool v{__version__}")
+    print("A tool for demultiplexing, reverse complementing, merging, and trimming primers from sequencing reads.")
+    sys.exit(0)
+
+# Create argument parser with version flag first
 parser = argparse.ArgumentParser(description="Process reads by demultiplexing, reverse complementing, merging, and trimming primers.")
+parser.add_argument('--version', action='store_true', help="Show version information and exit")
+
+# Parse only known args first to check for version flag
+args, remaining = parser.parse_known_args()
+
+# If version is requested, show it and exit before requiring other arguments
+if args.version:
+    show_version()
+
+# Add the rest of the arguments
 parser.add_argument('--config', type=str, help="Path to the YAML configuration file")
 parser.add_argument('--project', type=str, required=True, help="Project type (e.g., 16S, ITS)")
 parser.add_argument('--input', type=str, required=True, help="Input reads file (FASTQ.gz format)")
 parser.add_argument('--output', type=str, required=True, help="Output directory for processed files")
 parser.add_argument('--log', type=str, default='process.log', help="Log file to store the output")
+
+# Parse all arguments
 args = parser.parse_args()
 
 # Determine script's directory
@@ -64,6 +86,9 @@ pipeline_config = config[args.project]
 
 # Setup logging
 logging.basicConfig(filename=args.log, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Log version information
+logging.info(f"BCO Demux Tool v{__version__} starting")
 
 # Validate required parameters
 required_params = ['min_len', 'max_len', 'forward_primer', 'reverse_primer']
@@ -209,6 +234,10 @@ if __name__ == "__main__":
     # Clear the log file
     open(args.log, 'w').close()
     
+    # Add version information to log file header
+    logging.info(f"BCO Demux Tool v{__version__}")
+    logging.info(f"Command: {' '.join(sys.argv)}")
+    
     # Execute the steps
     demux_forward()
     demux_reverse()
@@ -217,3 +246,6 @@ if __name__ == "__main__":
     trim_primers()
     generate_summary()
     cleanup_intermediate_dirs()
+    
+    # Log completion with version
+    logging.info(f"BCO Demux Tool v{__version__} completed successfully")
