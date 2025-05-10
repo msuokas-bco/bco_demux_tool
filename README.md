@@ -23,7 +23,7 @@ The script executes the following steps:
   - `glob`
   - `gzip`
   - `logging`
-  - `yaml`
+  - `pyyaml`
 - **External Tools**:
   - `cutadapt`: Version 3.0 or higher.
   - `seqkit`: Version 2.6.0 or higher (supports `AvgQual`).
