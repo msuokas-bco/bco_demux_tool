@@ -1,22 +1,30 @@
-# Example configuration file for pipeline processing
+# BCO Demux Tool — configuration file
+# One block per project type; the key must match the --project argument.
+#
+# Required parameters: forward_primer, reverse_primer, min_len, max_len
+# Optional parameters: cores (default: 1), error_rate (default: 0.1), min_reads (default: 20)
+#
+# Primers are written 5'→3'. The reverse primer is automatically reverse-complemented
+# before primer trimming, so no manual conversion is needed here.
+#
+# Barcode sequences are hardcoded in bco_demux.py — no external FASTA files are needed.
 
 16S:
   forward_primer: "RGTTYGATYMTGGCTCAG"
   reverse_primer: "RGYTACCTTGTTACGACTT"
-  # For non-default barcode files, provide absolute filepaths
-  forward_barcodes: "barcodes96.fasta" 
-  reverse_barcodes: "reverse_barcodes96.fasta"
   min_len: 1200
   max_len: 1700
   cores: 4
+  error_rate: 0.1
+  min_reads: 20
 
 ITS:
   forward_primer: "TCCGTAGGTGAACCTGCGG"
   reverse_primer: "TCCTCCGCTTATTGATATGC"
-  forward_barcodes: "barcodes96.fasta"
-  reverse_barcodes: "reverse_barcodes96.fasta"
   min_len: 200
   max_len: 2000
   cores: 4
+  error_rate: 0.1
+  min_reads: 20
 
-# Add additional project types as needed
+# Add additional project types below using the same structure.
