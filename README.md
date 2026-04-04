@@ -162,6 +162,18 @@ BCO uses a plate of **10 forward** (row) and **12 reverse** (column) 12-nt barco
 
 ---
 
+## Acknowledgements
+
+This tool relies on the following open-source software. If you use `bco_demux.py` in work leading to a publication, please cite these tools accordingly.
+
+**cutadapt**
+> Martin, M. (2011). Cutadapt removes adapter sequences from high-throughput sequencing reads. *EMBnet.journal*, 17(1), 10–12. https://doi.org/10.14806/ej.17.1.200
+
+**seqkit**
+> Shen, W., Le, S., Li, Y., & Hu, F. (2016). SeqKit: A cross-platform and ultrafast toolkit for FASTA/Q file manipulation. *PLOS ONE*, 11(10), e0163962. https://doi.org/10.1371/journal.pone.0163962
+
+---
+
 ## License
 
 GPL-3.0 — see [LICENSE](LICENSE).

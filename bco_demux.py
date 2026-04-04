@@ -13,7 +13,7 @@ import sys
 import shutil
 
 # Version information
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 # Barcode Definitions
 # 10 Forward Barcodes: F1–F10 (rows)
@@ -193,20 +193,20 @@ def check_dependencies():
 
 
 def run_command(cmd, dry_run=False):
-    """Run a shell command, logging stderr on success. Skips execution in dry-run mode."""
-    logging.info(f"Running command: {cmd}")
+    """Run a command (as an argument list), logging stderr on success. Skips execution in dry-run mode."""
+    logging.info(f"Running command: {' '.join(cmd)}")
     if dry_run:
         logging.info("[DRY RUN] Command not executed.")
         return
     try:
         result = subprocess.run(
-            cmd, shell=True, check=True,
+            cmd, shell=False, check=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         if result.stderr:
             logging.info(f"STDERR: {result.stderr.strip()}")
     except subprocess.CalledProcessError as e:
-        logging.error(f"Command failed: {cmd}")
+        logging.error(f"Command failed: {' '.join(cmd)}")
         logging.error(f"Return code: {e.returncode}")
         if e.stdout:
             logging.error(f"STDOUT: {e.stdout.strip()}")
@@ -251,16 +251,23 @@ def demux_all_reads(samples, reads_file, demux_temp_dir, output_dir,
                 outfile.write(f">{s['sample_id']}\n{seq_fwd}\n")
                 outfile.write(f">{s['sample_id']}_REV\n{seq_rev}\n")
 
-        cmd = (
-            # -e 0: zero mismatches required (exact barcode matching)
-            # -O 24: minimum overlap = full barcode length (12 fwd + 12 rev)
-            # -g: anchored 5' adapter (barcode at read start, spacer handles 3' end)
-            # --discard-untrimmed: discard reads that did not match any barcode
-            # {name}: cutadapt placeholder replaced with the matched FASTA entry name
-            f"cutadapt -e 0 -O 24 -g file:{combined_barcode_temp} --discard-untrimmed "
-            f"-m {min_len} -M {max_len} -j {cores} "
-            f"-o {demux_temp_dir}/{{name}}.fastq.gz {reads_file}"
-        )
+        # -e 0: zero mismatches required (exact barcode matching)
+        # -O 24: minimum overlap = full barcode length (12 fwd + 12 rev)
+        # -g: anchored 5' adapter (barcode at read start, spacer handles 3' end)
+        # --discard-untrimmed: discard reads that did not match any barcode
+        # {name}: cutadapt placeholder replaced with the matched FASTA entry name
+        cmd = [
+            "cutadapt",
+            "-e", "0",
+            "-O", "24",
+            "-g", f"file:{combined_barcode_temp}",
+            "--discard-untrimmed",
+            "-m", str(min_len),
+            "-M", str(max_len),
+            "-j", str(cores),
+            "-o", f"{demux_temp_dir}/{{name}}.fastq.gz",
+            reads_file,
+        ]
         run_command(cmd, dry_run=dry_run)
 
     finally:
@@ -305,7 +312,7 @@ def process_and_merge_reads(samples, demux_temp_dir, merged_dir, dry_run=False):
                 # -r: reverse, -p: complement → together = reverse complement.
                 # Brings _REV-matched reads into the same 5'→3' orientation as
                 # forward-matched reads before merging.
-                cmd = f"seqkit seq -rp --seq-type DNA -o {rev_comp_file} {rev_file}"
+                cmd = ["seqkit", "seq", "-rp", "--seq-type", "DNA", "-o", rev_comp_file, rev_file]
                 run_command(cmd, dry_run=dry_run)
                 if not dry_run:
                     files_to_merge.append(rev_comp_file)
@@ -333,13 +340,20 @@ def trim_primers(merged_dir, trimmed_dir, forward_primer, reverse_primer_rc,
             base_name = os.path.basename(merged_file)
             sample_id = base_name.replace("merged_", "").replace(".fastq.gz", "")
             output_file = os.path.join(trimmed_dir, f"{sample_id}_trimmed.fastq.gz")
-            cmd = (
-                # -g: trim forward primer from the 5' end of each read
-                # -a: trim reverse primer (passed as its RC) from the 3' end
-                # --trimmed-only: discard reads where neither primer was found
-                f"cutadapt -g {forward_primer} -a {reverse_primer_rc} --trimmed-only "
-                f"-j {cores} --error-rate {erate} -m {min_len} -o {output_file} {merged_file}"
-            )
+            # -g: trim forward primer from the 5' end of each read
+            # -a: trim reverse primer (passed as its RC) from the 3' end
+            # --trimmed-only: discard reads where neither primer was found
+            cmd = [
+                "cutadapt",
+                "-g", forward_primer,
+                "-a", reverse_primer_rc,
+                "--trimmed-only",
+                "-j", str(cores),
+                "--error-rate", str(erate),
+                "-m", str(min_len),
+                "-o", output_file,
+                merged_file,
+            ]
             try:
                 run_command(cmd, dry_run=dry_run)
             except subprocess.CalledProcessError as e:
@@ -369,8 +383,8 @@ def generate_summary(trimmed_dir, dry_run=False):
         for idx, trimmed_file in enumerate(trimmed_files):
             result = subprocess.run(
                 # -a: compute all statistics (including Q20, AvgQual); -T: TSV output
-                f"seqkit stats -aT {trimmed_file}",
-                shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                ["seqkit", "stats", "-aT", trimmed_file],
+                shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 universal_newlines=True
             )
             if result.returncode != 0:
