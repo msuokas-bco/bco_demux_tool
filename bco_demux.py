@@ -8,12 +8,14 @@ import argparse
 import glob
 import gzip
 import logging
+import resource
+import tempfile
 import yaml
 import sys
 import shutil
 
 # Version information
-__version__ = "0.6.1"
+__version__ = "0.7.1"
 
 # Barcode Definitions
 # 10 Forward Barcodes: F1–F10 (rows)
@@ -35,6 +37,46 @@ REVERSE_BARCODES = {
 # The '...' spacer is required by cutadapt to restrict barcode matching to the
 # ends of reads (non-internal matching). Do not modify.
 BARCODE_SPACER = "..."
+
+# DNA CS standard reference sequence (3,584 bp, Oxford Nanopore control strand)
+DNA_CS_REFERENCE = (
+    "GCCATCAGATTGTGTTTGTTAGTCGCTTTTTTTTTTTGGAATTTTTTTTTTGGAATTTTTTTTTTGCGCTAACAACCTCCTGCCGTTTTGCCCGTGCATA"
+    "TCGGTCACGAACAAATCTGATTACTAAACACAGTAGCCTGGATTTGTTCTATCAGTAATCGACCTTATTCCTAATTAAATAGAGCAAATCCCCTTATTGG"
+    "GGGTAAGACATGAAGATGCCAGAAAAACATGACCTGTTGGCCGCCATTCTCGCGGCAAAGGAACAAGGCATCGGGGCAATCCTTGCGTTTGCAATGGCGT"
+    "ACCTTCGCGGCAGATATAATGGCGGTGCGTTTACAAAAACAGTAATCGACGCAACGATGTGCGCCATTATCGCCTAGTTCATTCGTGACCTTCTCGACTT"
+    "CGCCGGACTAAGTAGCAATCTCGCTTATATAACGAGCGTGTTTATCGGCTACATCGGTACTGACTCGATTGGTTCGCTTATCAAACGCTTCGCTGCTAAA"
+    "AAAGCCGGAGTAGAAGATGGTAGAAATCAATAATCAACGTAAGGCGTTCCTCGATATGCTGGCGTGGTCGGAGGGAACTGATAACGGACGTCAGAAAACC"
+    "AGAAATCATGGTTATGACGTCATTGTAGGCGGAGAGCTATTTACTGATTACTCCGATCACCCTCGCAAACTTGTCACGCTAAACCCAAAACTCAAATCAA"
+    "CAGGCGCCGGACGCTACCAGCTTCTTTCCCGTTGGTGGGATGCCTACCGCAAGCAGCTTGGCCTGAAAGACTTCTCTCCGAAAAGTCAGGACGCTGTGGC"
+    "ATTGCAGCAGATTAAGGAGCGTGGCGCTTTACCTATGATTGATCGTGGTGATATCCGTCAGGCAATCGACCGTTGCAGCAATATCTGGGCTTCACTGCCG"
+    "GGCGCTGGTTATGGTCAGTTCGAGCATAAGGCTGACAGCCTGATTGCAAAATTCAAAGAAGCGGGCGGAACGGTCAGAGAGATTGATGTATGAGCAGAGT"
+    "CACCGCGATTATCTCCGCTCTGGTTATCTGCATCATCGTCTGCCTGTCATGGGCTGTTAATCATTACCGTGATAACGCCATTACCTACAAAGCCCAGCGC"
+    "GACAAAAATGCCAGAGAACTGAAGCTGGCGAACGCGGCAATTACTGACATGCAGATGCGTCAGCGTGATGTTGCTGCGCTCGATGCAAAATACACGAAGG"
+    "AGTTAGCTGATGCTAAAGCTGAAAATGATGCTCTGCGTGATGATGTTGCCGCTGGTCGTCGTCGGTTGCACATCAAAGCAGTCTGTCAGTCAGTGCGTGA"
+    "AGCCACCACCGCCTCCGGCGTGGATAATGCAGCCTCCCCCCGACTGGCAGACACCGCTGAACGGGATTATTTCACCCTCAGAGAGAGGCTGATCACTATGC"
+    "AAAAACAACTGGAAGGAACCCAGAAGTATATTAATGAGCAGTGCAGATAGAGTTGCCCATATCGATGGGCAACTCATGCAATTATTGTGAGCAATACACAC"
+    "GCGCTTCCAGCGGAGTATAAATGCCTAAAGTAATAAAACCGAGCAATCCATTTACGAATGTTTGCTGGGTTTCTGTTTTAACAACATTTTCTGCGCCGCCA"
+    "CAAATTTTGGCTGCATCGACAGTTTTCTTCTGCCCAATTCCAGAAACGAAGAAATGATGGGTGATGGTTTCCTTTGGTGCTACTGCTGCCGGTTTGTTTTG"
+    "AACAGTAAACGTCTGTTGAGCACATCCTGTAATAAGCAGGGCCAGCGCAGTAGCGAGTAGCATTTTTTTCATGGTGTTATTCCCGATGCTTTTTGAAGTTC"
+    "GCAGAATCGTATGTGTAGAAAATTAAACAAACCCTAAACAATGAGTTGAAATTTCATATTGTTAATATTTATTAATGTATGTCAGGTGCGATGAATCGTCAT"
+    "TGTATTCCCGGATTAACTATGTCCACAGCCCTGACGGGGAACTTCTCTGCGGGAGTGTCCGGGAATAATTAAAACGATGCACACAGGGTTTAGCGCGTACAC"
+    "GTATTGCATTATGCCAACGCCCCGGTGCTGACACGGAAGAAACCGGACGTTATGATTTAGCGTGGAAAGATTTGTGTAGTGTTCTGAATGCTCTCAGTAAAT"
+    "AGTAATGAATTATCAAAGGTATAGTAATATCTTTTATGTTCATGGATATTTGTAACCCATCGGAAAACTCCTGCTTTAGCAAGATTTTCCCTGTATTGCTGA"
+    "AATGTGATTTCTCTTGATTTCAACCTATCATAGGACGTTTCTATAAGATGCGTGTTTCTTGAGAATTTAACATTTACAACCTTTTTAAGTCCTTTTATTAAC"
+    "ACGGTGTTATCGTTTTCTAACACGATGTGAATATTATCTGTGGCTAGATAGTAAATATAATGTGAGACGTTGTGACGTTTTAGTTCAGAATAAAACAATTCA"
+    "CAGTCTAAATCTTTTCGCACTTGATCGAATATTTCTTTAAAAATGGCAACCTGAGCCATTGGTAAAACCTTCCATGTGATACGAGGGCGCGTAGTTTGCATT"
+    "ATCGTTTTTATCGTTTCAATCTGGTCTGACCTCCTTGTGTTTTGTTGATGATTTATGTCAAATATTAGGAATGTTTTCACTTAATAGTATTGGTTGCGTAAC"
+    "AAAGTGCGGTCCTGCTGGCATTCTGGAGGGAAATACAACCGACAGATGTATGTAAGGCCAACGTGCTCAAATCTTCATACAGAAAGATTTGAAGTAATATTT"
+    "TAACCGCTAGATGAAGAGCAAGCGCATGGAGCGACAAAATGAATAAAGAACAATCTGCTGATGATCCCTCCGTGGATCTGATTCGTGTAAAAAATATGCTTA"
+    "ATAGCACCATTTCTATGAGTTACCCTGATGTTGTAATTGCATGTATAGAACATAAGGTGTCTCTGGAAGCATTCAGAGCAATTGAGGCAGCGTTGGTGAAGC"
+    "ACGATAATAATATGAAGGATTATTCCCTGGTGGTTGACTGATCACCATAACTGCTAATCATTCAAACTATTTAGTCTGTGACAGAGCCAACACGCAGTCTGTC"
+    "ACTGTCAGGAAAGTGGTAAAACTGCAACTCAATTACTGCAATGCCCTCGTAATTAAGTGAATTTACAATATCGTCCTGTTCGGAGGGAAGAACGCGGGATGT"
+    "TCATTCTTCATCACTTTTAATTGATGTATATGCTCTCTTTTCTGACGTTAGTCTCCGACGGCAGGCTTCAATGACCCAGGCTGAGAAATTCCCGGACCCTTTT"
+    "TGCTCAAGAGCGATGTTAATTTGTTCAATCATTTGGTTAGGAAAGCGGATGTTGCGGGTTGTTGTTCTGCGGGTTCTGTTCTTCGTTGACATGAGGTTGCCC"
+    "CGTATTCAGTGTCGCTGATTTGTATTGTCTGAAGTTGTTTTTACGTTAAGTTGATGCAGATCAATTAATACGATACCTGCGTCATAATTGATTATTTGACGTG"
+    "GTTTGATGGCCTCCACGCACGTTGTGATATGTAGATGATAATCATTATCACTTTACGGGTCCTTTCCGGTGAAAAAAAAGGTACCAAAAAAAACATCGTCGTG"
+    "AGTAGTGAACCGTAAGC"
+)
 
 # Characters not safe for use in filenames
 _UNSAFE_CHARS = re.compile(r"[^\w\-]")  # keep alphanumerics, underscore, hyphen
@@ -183,7 +225,7 @@ def count_sequences(file_path):
 
 def check_dependencies():
     """Verify that required external tools are available."""
-    required_tools = ["cutadapt", "seqkit"]
+    required_tools = ["cutadapt", "seqkit", "minimap2", "samtools"]
     missing_tools = [t for t in required_tools if shutil.which(t) is None]
     if missing_tools:
         raise EnvironmentError(
@@ -293,7 +335,64 @@ def write_run_barcodes(samples, output_dir):
             fh.write(f"{s['sample_id']}{extra_vals}\t{s['fwd_label']}\t{s['fwd_seq']}\t{s['rev_label']}\t{s['rev_seq']}\n")
 
 
-# Step 3: Reverse complement _REV reads and merge with forward-oriented reads
+# Step 3: Align all input reads to DNA CS reference and save matches
+def extract_dna_cs(input_fastq, dna_cs_dir, threads=1, dry_run=False):
+    """Align all input reads to the DNA CS reference and save mapped reads to
+    dna_cs/dna_cs.fastq.gz for use with nanoporeQC.
+
+    Runs on the original input because DNA CS reads carry no sample barcodes
+    and are discarded by the demux step.  Sample amplicon reads (16S, ITS, …)
+    share no homology with the DNA CS sequence and will not align, so only
+    genuine DNA CS reads appear in the output.
+    """
+    dna_cs_output = os.path.join(dna_cs_dir, "dna_cs.fastq.gz")
+
+    if dry_run:
+        logging.info(f"[DRY RUN] Would extract DNA CS reads to {dna_cs_output}")
+        return
+
+    ref_fd, ref_path = tempfile.mkstemp(suffix=".fasta")
+    try:
+        with os.fdopen(ref_fd, 'w') as ref_fh:
+            ref_fh.write(f">DNA_CS_standard\n{DNA_CS_REFERENCE}\n")
+
+        logging.info("Aligning all input reads to DNA CS reference")
+
+        minimap2_proc = subprocess.Popen(
+            ["minimap2", "-ax", "map-ont", "-t", str(threads), ref_path, input_fastq],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        # -F 2308: exclude unmapped (4), secondary (256), supplementary (2048)
+        #   alignments to avoid duplicate reads in FASTQ output
+        samtools_proc = subprocess.Popen(
+            ["samtools", "fastq", "-F", "2308"],
+            stdin=minimap2_proc.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        minimap2_proc.stdout.close()
+
+        with gzip.open(dna_cs_output, 'wb') as out_fh:
+            for chunk in iter(lambda: samtools_proc.stdout.read(65536), b''):
+                out_fh.write(chunk)
+
+        minimap2_proc.wait()
+        samtools_proc.wait()
+
+        if minimap2_proc.returncode != 0:
+            raise subprocess.CalledProcessError(minimap2_proc.returncode, "minimap2")
+        if samtools_proc.returncode != 0:
+            raise subprocess.CalledProcessError(samtools_proc.returncode, "samtools fastq")
+
+        n_reads = count_sequences(dna_cs_output)
+        logging.info(f"DNA CS extraction complete: {n_reads:,} reads → {dna_cs_output}")
+
+    finally:
+        os.unlink(ref_path)
+
+
+# Step 4: Reverse complement _REV reads and merge with forward-oriented reads
 def process_and_merge_reads(samples, demux_temp_dir, merged_dir, dry_run=False):
     """For each sample, reverse-complements any _REV-matched reads and merges
     them with their forward-oriented counterparts."""
@@ -329,43 +428,44 @@ def process_and_merge_reads(samples, demux_temp_dir, merged_dir, dry_run=False):
                 os.remove(rev_comp_file)
 
 
-# Step 4: Trim forward and reverse primers from merged reads
+# Step 5: Trim forward and reverse primers from merged reads
 def trim_primers(merged_dir, trimmed_dir, forward_primer, reverse_primer_rc,
                  min_len, cores, erate, min_reads, dry_run=False):
-    """Filters merged read files by a minimum read count, then trims primers."""
+    """Trims primers from merged reads, then removes samples below min_reads threshold."""
     merged_files = glob.glob(f"{merged_dir}/merged_*.fastq.gz")
     for merged_file in merged_files:
-        num_sequences = count_sequences(merged_file)
-        if num_sequences >= min_reads:
-            base_name = os.path.basename(merged_file)
-            sample_id = base_name.replace("merged_", "").replace(".fastq.gz", "")
-            output_file = os.path.join(trimmed_dir, f"{sample_id}_trimmed.fastq.gz")
-            # -g: trim forward primer from the 5' end of each read
-            # -a: trim reverse primer (passed as its RC) from the 3' end
-            # --trimmed-only: discard reads where neither primer was found
-            cmd = [
-                "cutadapt",
-                "-g", forward_primer,
-                "-a", reverse_primer_rc,
-                "--trimmed-only",
-                "-j", str(cores),
-                "--error-rate", str(erate),
-                "-m", str(min_len),
-                "-o", output_file,
-                merged_file,
-            ]
-            try:
-                run_command(cmd, dry_run=dry_run)
-            except subprocess.CalledProcessError as e:
-                logging.error(f"Error during trimming {merged_file}: {e}")
-        else:
-            logging.warning(
-                f"'{os.path.basename(merged_file)}' has only {num_sequences} reads "
-                f"(threshold: {min_reads}). Skipping primer trimming."
-            )
+        base_name = os.path.basename(merged_file)
+        sample_id = base_name.replace("merged_", "").replace(".fastq.gz", "")
+        output_file = os.path.join(trimmed_dir, f"{sample_id}_trimmed.fastq.gz")
+        # -g: trim forward primer from the 5' end of each read
+        # -a: trim reverse primer (passed as its RC) from the 3' end
+        # --trimmed-only: discard reads where neither primer was found
+        cmd = [
+            "cutadapt",
+            "-g", forward_primer,
+            "-a", reverse_primer_rc,
+            "--trimmed-only",
+            "-j", str(cores),
+            "--error-rate", str(erate),
+            "-m", str(min_len),
+            "-o", output_file,
+            merged_file,
+        ]
+        try:
+            run_command(cmd, dry_run=dry_run)
+            if not dry_run:
+                trimmed_count = count_sequences(output_file)
+                if trimmed_count < min_reads:
+                    logging.warning(
+                        f"'{os.path.basename(output_file)}' has only {trimmed_count} reads "
+                        f"after primer trimming (threshold: {min_reads}). Removing."
+                    )
+                    os.remove(output_file)
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Error during trimming {merged_file}: {e}")
 
 
-# Step 5: Generate summary file
+# Step 6: Generate summary file
 def generate_summary(trimmed_dir, dry_run=False):
     """Runs 'seqkit stats' on all trimmed files and writes a summary TSV."""
     if dry_run:
@@ -379,8 +479,9 @@ def generate_summary(trimmed_dir, dry_run=False):
         logging.warning("No trimmed files found — summary will be empty.")
         return
 
+    header_written = False
     with open(summary_file, 'w') as summary:
-        for idx, trimmed_file in enumerate(trimmed_files):
+        for trimmed_file in trimmed_files:
             result = subprocess.run(
                 # -a: compute all statistics (including Q20, AvgQual); -T: TSV output
                 ["seqkit", "stats", "-aT", trimmed_file],
@@ -409,8 +510,9 @@ def generate_summary(trimmed_dir, dry_run=False):
             header = [raw_header[i] for i in indices]
             stats = [raw_stats[i] for i in indices]
 
-            if idx == 0:
-                summary.write("\t".join(header) + "\n")  # write header once, from the first file
+            if not header_written:
+                summary.write("\t".join(header) + "\n")  # write header once, from the first successful file
+                header_written = True
 
             if 'file' in header:
                 # seqkit stats writes the full path; replace with basename for readability
@@ -518,10 +620,12 @@ def main():
     demux_temp_dir = os.path.join(output_dir, "demux_temp")
     merged_dir = os.path.join(output_dir, "merged_reads")
     trimmed_dir = os.path.join(output_dir, "trimmed_reads")
+    dna_cs_dir = os.path.join(output_dir, "dna_cs")
 
     os.makedirs(demux_temp_dir, exist_ok=True)
     os.makedirs(merged_dir, exist_ok=True)
     os.makedirs(trimmed_dir, exist_ok=True)
+    os.makedirs(dna_cs_dir, exist_ok=True)
 
     try:
         check_dependencies()
@@ -530,9 +634,23 @@ def main():
         # Load and validate samplesheet — fail early before any processing
         samples = load_samplesheet(args.samplesheet)
 
+        # Raise file descriptor limit: cutadapt opens one output file per sample
+        # per orientation simultaneously; default soft limit (1024) is too low for
+        # large sample counts with Python 3.12+ / cutadapt 5.0.
+        try:
+            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            required = len(samples) * 2 + 64
+            if soft < required:
+                new_soft = min(hard, max(required, 4096))
+                resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+                logging.info(f"Raised file descriptor limit: {soft} → {new_soft}")
+        except (ValueError, resource.error) as e:
+            logging.warning(f"Could not raise file descriptor limit: {e}")
+
         demux_all_reads(samples, args.input, demux_temp_dir, output_dir,
                         min_len, max_len, cores, dry_run=dry_run)
         write_run_barcodes(samples, output_dir)
+        extract_dna_cs(args.input, dna_cs_dir, threads=cores, dry_run=dry_run)
         process_and_merge_reads(samples, demux_temp_dir, merged_dir, dry_run=dry_run)
         trim_primers(merged_dir, trimmed_dir, forward_primer, reverse_primer_rc,
                      min_len, cores, erate, min_reads, dry_run=dry_run)
