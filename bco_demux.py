@@ -15,7 +15,7 @@ import sys
 import shutil
 
 # Version information
-__version__ = "0.7.1"
+__version__ = "0.7.2"
 
 # Barcode Definitions
 # 10 Forward Barcodes: F1–F10 (rows)
@@ -224,14 +224,29 @@ def count_sequences(file_path):
 
 
 def check_dependencies():
-    """Verify that required external tools are available."""
-    required_tools = ["cutadapt", "seqkit", "minimap2", "samtools"]
+    """Verify that required external tools are available.
+
+    Returns True if optional DNA CS tools (minimap2, samtools) are also
+    available, False if either is missing (DNA CS extraction will be skipped).
+    """
+    required_tools = ["cutadapt", "seqkit"]
     missing_tools = [t for t in required_tools if shutil.which(t) is None]
     if missing_tools:
         raise EnvironmentError(
             f"Missing required tools: {', '.join(missing_tools)}. "
             "Please install them and ensure they are in your PATH."
         )
+
+    optional_tools = ["minimap2", "samtools"]
+    missing_optional = [t for t in optional_tools if shutil.which(t) is None]
+    if missing_optional:
+        logging.warning(
+            f"Optional tool(s) not found: {', '.join(missing_optional)}. "
+            "DNA CS extraction will be skipped. "
+            "Install minimap2 and samtools to enable this step."
+        )
+        return False
+    return True
 
 
 def run_command(cmd, dry_run=False):
@@ -270,11 +285,11 @@ def merge_files(files_to_merge, output_file, dry_run=False):
 
 
 # Step 1: Demultiplex reads using samplesheet-derived barcodes
-def demux_all_reads(samples, reads_file, demux_temp_dir, output_dir,
+def demux_all_reads(samples, reads_file, demux_temp_dir,
                     min_len, max_len, cores, dry_run=False):
     """Builds a barcode FASTA from samplesheet entries only (both orientations)
     and runs a single cutadapt pass to demultiplex reads by SampleID."""
-    combined_barcode_temp = os.path.join(output_dir, "generated_barcodes.fasta")
+    combined_barcode_temp = os.path.join(demux_temp_dir, "generated_barcodes.fasta")
     logging.info(f"Generating barcode FASTA for {len(samples)} sample(s): {combined_barcode_temp}")
 
     try:
@@ -435,7 +450,7 @@ def trim_primers(merged_dir, trimmed_dir, forward_primer, reverse_primer_rc,
     merged_files = glob.glob(f"{merged_dir}/merged_*.fastq.gz")
     for merged_file in merged_files:
         base_name = os.path.basename(merged_file)
-        sample_id = base_name.replace("merged_", "").replace(".fastq.gz", "")
+        sample_id = base_name[len("merged_"):-len(".fastq.gz")]
         output_file = os.path.join(trimmed_dir, f"{sample_id}_trimmed.fastq.gz")
         # -g: trim forward primer from the 5' end of each read
         # -a: trim reverse primer (passed as its RC) from the 3' end
@@ -506,6 +521,20 @@ def generate_summary(trimmed_dir, dry_run=False):
 
             desired_cols = ['file', 'num_seqs', 'min_len', 'avg_len', 'max_len', 'Q20(%)', 'AvgQual']
             indices = [i for i, col in enumerate(raw_header) if col in desired_cols]
+
+            if not indices:
+                logging.warning(
+                    f"No expected columns found in seqkit stats output for {trimmed_file}. "
+                    f"Header was: {raw_header}"
+                )
+                continue
+
+            if max(indices) >= len(raw_stats):
+                logging.warning(
+                    f"seqkit stats output has fewer columns than expected for {trimmed_file}. "
+                    "Skipping."
+                )
+                continue
 
             header = [raw_header[i] for i in indices]
             stats = [raw_stats[i] for i in indices]
@@ -594,10 +623,14 @@ def main():
     with open(config_path, 'r') as fh:
         config = yaml.safe_load(fh)
 
+    if not config:
+        raise ValueError(f"Configuration file is empty: {config_path}")
     if args.project not in config:
         raise ValueError(f"Project type '{args.project}' not found in configuration file.")
     pipeline_config = config[args.project]
 
+    if not pipeline_config or not isinstance(pipeline_config, dict):
+        raise ValueError(f"Project '{args.project}' has no parameters defined in configuration file.")
     required_params = ['min_len', 'max_len', 'forward_primer', 'reverse_primer']
     for param in required_params:
         if param not in pipeline_config:
@@ -605,8 +638,8 @@ def main():
                 f"Missing required config parameter for project '{args.project}': {param}"
             )
 
-    forward_primer = pipeline_config['forward_primer']
-    reverse_primer = pipeline_config['reverse_primer']
+    forward_primer = pipeline_config['forward_primer'].upper()
+    reverse_primer = pipeline_config['reverse_primer'].upper()
     # Config stores the reverse primer 5'→3'; cutadapt -a expects the sequence as
     # it appears on the read (i.e. the RC), so we pre-compute it here.
     reverse_primer_rc = reverse_complement(reverse_primer)
@@ -625,32 +658,63 @@ def main():
     os.makedirs(demux_temp_dir, exist_ok=True)
     os.makedirs(merged_dir, exist_ok=True)
     os.makedirs(trimmed_dir, exist_ok=True)
-    os.makedirs(dna_cs_dir, exist_ok=True)
 
     try:
-        check_dependencies()
+        dna_cs_available = check_dependencies()
         validate_input_file(args.input)
 
         # Load and validate samplesheet — fail early before any processing
         samples = load_samplesheet(args.samplesheet)
 
         # Raise file descriptor limit: cutadapt opens one output file per sample
-        # per orientation simultaneously; default soft limit (1024) is too low for
-        # large sample counts with Python 3.12+ / cutadapt 5.0.
+        # per orientation simultaneously; default soft limits (256 on macOS,
+        # 1024 on Linux) can be too low for large sample counts.
+        # Strategy: raise soft to hard first; if still insufficient, attempt to
+        # raise both soft and hard to a safe target (requires no special privileges
+        # on most systems — processes can set hard = current hard).
+        required_fds = len(samples) * 2 + 64
         try:
             soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-            required = len(samples) * 2 + 64
-            if soft < required:
-                new_soft = min(hard, max(required, 4096))
-                resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
-                logging.info(f"Raised file descriptor limit: {soft} → {new_soft}")
-        except (ValueError, resource.error) as e:
-            logging.warning(f"Could not raise file descriptor limit: {e}")
+        except resource.error:
+            soft, hard = 256, 256  # conservative fallback if query fails
 
-        demux_all_reads(samples, args.input, demux_temp_dir, output_dir,
+        if soft < required_fds:
+            target = max(required_fds, 4096)
+            # First try: raise soft limit to the current hard limit (never requires privileges)
+            try:
+                new_soft = min(hard, target)
+                resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+                soft = new_soft
+                logging.info(f"Raised file descriptor soft limit to {soft}")
+            except (ValueError, resource.error) as e:
+                logging.warning(f"Could not raise file descriptor soft limit: {e}")
+
+            # Second try: if soft is still insufficient, attempt to raise both soft
+            # and hard (works on Linux with unlimited hard; may require root on macOS)
+            if soft < required_fds:
+                try:
+                    resource.setrlimit(resource.RLIMIT_NOFILE, (target, target))
+                    soft = target
+                    logging.info(f"Raised file descriptor hard+soft limit to {soft}")
+                except (ValueError, resource.error) as e:
+                    logging.warning(f"Could not raise file descriptor hard limit: {e}")
+
+        if soft < required_fds:
+            logging.warning(
+                f"File descriptor limit ({soft}) may be too low for "
+                f"{len(samples)} samples (need ≥{required_fds}). "
+                "If cutadapt fails with 'Too many open files', run: "
+                "ulimit -n 8192"
+            )
+
+        demux_all_reads(samples, args.input, demux_temp_dir,
                         min_len, max_len, cores, dry_run=dry_run)
         write_run_barcodes(samples, output_dir)
-        extract_dna_cs(args.input, dna_cs_dir, threads=cores, dry_run=dry_run)
+        if dna_cs_available:
+            os.makedirs(dna_cs_dir, exist_ok=True)
+            extract_dna_cs(args.input, dna_cs_dir, threads=cores, dry_run=dry_run)
+        else:
+            logging.info("Skipping DNA CS extraction (minimap2 or samtools not available).")
         process_and_merge_reads(samples, demux_temp_dir, merged_dir, dry_run=dry_run)
         trim_primers(merged_dir, trimmed_dir, forward_primer, reverse_primer_rc,
                      min_len, cores, erate, min_reads, dry_run=dry_run)
